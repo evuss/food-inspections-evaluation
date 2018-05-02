@@ -1,0 +1,18 @@
+---
+title: "Food Inspections Evaluations"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Initial exploration of data
+
+```{r}
+library(tidyverse)
+food_inspections %>% 
+  as_data_frame() %>% 
+  DataExplorer::GenerateReport()
+```
+
