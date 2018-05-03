@@ -6,13 +6,211 @@ output: github_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
-#Initial exploration of data
+# Read in data
 
 ```{r}
+dat_model <- readRDS("~/food-inspections-evaluation/DATA/dat_model.Rds")
+food_inspections <- readRDS("~/food-inspections-evaluation/DATA/food_inspections.Rds")
+```
+
+
+#Initial exploration food_inspections
+
+```{r}
+
 library(tidyverse)
+
 food_inspections %>% 
   as_data_frame() %>% 
   DataExplorer::GenerateReport()
+
+head(food_inspections)
+
+```
+##Missing values
+There seems to be some missing values in the Longitude/Latitude but otherwise ok. 
+
+##Distributions
+We probably don't need the inspection_ID unless it says something about when and by who the inspection was conducted by. 
+
+##Discrete features
+Understand the features:
+DBA_Name
+
+###Questions/things to do
+- Remove Inspection_ID, DBA_Name, AKA_Name, License
+- Geography/ location: we have long/lat, address, city, state etc. Perhaps look at correlations to the results in each level. Combine them into areas? Location is long+lat combined. 
+- Facility_Type should probably be as factor. Many values - combine some of them into other?
+- Does inspection time has anything to do with the outcome?
+- what does the risk tell us? Critical violations?
+
+
+#Initial exploration dat_model file
+
+```{r}
+
+DataExplorer::GenerateReport(dat_model)
+head(dat_model)
+```
+## Basics
+
+## Copy of glmnet_model from the test/train point to make changes in project
+
+### Startup
+```{r}
+## INSTALL THESE DEPENDENCIES
+install.packages("devtools",
+                 dependencies = TRUE,
+                 repos='http://cran.us.r-project.org')
+install.packages("Rcpp",
+                 dependencies = TRUE,
+                 repos='http://cran.us.r-project.org')
+
+## Update two packages not on CRAN using the devtools package.
+devtools::install_github(repo = 'geneorama/geneorama')
+devtools::install_github(repo = 'yihui/printr')
+
+## Update to RSocrata 1.7.2-2 (or later) 
+## which is only on github as of March 8, 2016
+devtools::install_github(repo = 'chicago/RSocrata')
+dat_model <- readRDS("~/food-inspections-evaluation/DATA/dat_model.Rds")
+
+```
+
+
+
+
+##==============================================================================
+## CREATE TEST / TRAIN PARTITIONS
+##==============================================================================
+
+Old train / test method is splitting it into test and train by inspection date. It is probably better splitting it into test and train by splitting it by random. 
+
+```{r}
+
+
+## 2014-07-01 is an easy separator
+#dat[Inspection_Date < "2014-07-01", range(Inspection_Date)]
+#dat[Inspection_Date > "2014-07-01", range(Inspection_Date)]
+
+#iiTrain <- dat[ , which(Inspection_Date < "2014-07-01")]
+#iiTest <- dat[ , which(Inspection_Date > "2014-07-01")]
+
+## Check to see if any rows didn't make it through the model.matrix formula
+#nrow(dat)
+#nrow(xmat)
+#nrow(mm)
+
+library(modelr)
+library(tidyverse)
+library(recipes)
+
+# leave out the column pass_flag since it is the opposite of fail_flag to make the model..
+
+dat_model %>% 
+  modelr::resample_partition(c(train=0.7, test=0.3)) ->
+  dat_splitraw
+
+dat_splitraw %>% 
+  pluck("train") %>% 
+  as_data_frame()->
+  dat_splittrainraw
+
+dat_split %>% 
+  pluck("test") %>% 
+  as_data_frame()->
+  dat_splittestraw
+```
+
+#recipe totransform/FE of the data_model dataset
+We make all the recipe steps on the training data to not do any analysis on the test data. 
+
+```{r}
+# set recipe
+  recipe_dat <- recipe(dat_splittrainraw, fail_flag~. ) # we use fail_flag as predictor and everything else as variables
+
+# make recipe
+recipe_dat %>% 
+  step_rm(ends_with("ID"),pass_flag, ends_with("Count"), License, LICENSE_DESCRIPTION)  %>% 
+    step_pca(starts_with("past"), num = 2)->
+    recipe_transf
+    
+# prep step
+recipe_transf <- prep(recipe_transf, verbose=TRUE)
+
+# bake step
+train_prep <- bake(recipe_transf, dat_splittrainraw)
+    
+
+head(train_prep)    
+
+DataExplorer::GenerateReport(train_prep)
+```
+##==============================================================================
+## GLMNET MODEL
+By using the library glmnetUtils we re-do the GLMNET model. 
+##==============================================================================
+```{r}
+
+library(glmnetUtils)
+  glmnet_dat<- glmnet(fail_flag~.,
+                        data=train_prep,
+                        family="binomial",
+                        alpha = 0.5)
+  
+  glmnet_datCV<- cv.glmnet(fail_flag~.,
+                        data=train_prep,
+                        family="binomial",
+                        alpha = 0.5)
+  
+  glmnet_dat
+  
+  plot(glmnet_datCV)
+  coef(glmnet_datCV)
+
+  
+ head(augment(glmnet_dat))
+ 
+#fitted(glmnet_dat)
+
+  
+```
+
+
+### Model performance
+
+```{r}
+ plot(glmnet_datCV)
+  coef(glmnet_datCV)
+  
+  
+predict()
+  
+```
+
+### Test model on test data
+```{r}
+library(modelr)
+test_raw %>% 
+  bake(numscleaned_fe, .) %>% 
+  modelr::add_predictions(glm_unbal,var="glm_unbal") ->
+  #modelr::add_predictions(glm_unbal,var="glm_unbal_class", type="class") ->
+  test_scored
+
+test_scored %>% 
+  ggplot(aes(x=glm_unbal, group=was_delayed, fill=was_delayed)) +
+  geom_density(alpha=.5) +
+  geom_vline(aes(xintercept=0))
+  
+  head(test_scored)
+```
+
+
+```{r}
+
+library(broom)
+ tidy(glmnet_dat)
+glance(glmnet_dat)
+
 ```
 
